@@ -932,10 +932,17 @@ static int fuse_try_move_page(struct fuse_copy_state *cs, struct page **pagep)
 		return err;
 	}
 
-	get_page(newpage);
+	page_cache_get(newpage);
 
 	if (!(buf->flags & PIPE_BUF_FLAG_LRU))
 		lru_cache_add_file(newpage);
+
+	/*
+	 * Release while we have extra ref on stolen page.  Otherwise
+	 * anon_pipe_buf_release() might think the page can be reused.
+	 */
+	buf->ops->release(cs->pipe, buf);
+	buf->ops = NULL;
 
 	err = 0;
 	spin_lock(&cs->req->waitq.lock);
@@ -947,12 +954,12 @@ static int fuse_try_move_page(struct fuse_copy_state *cs, struct page **pagep)
 
 	if (err) {
 		unlock_page(newpage);
-		put_page(newpage);
+		page_cache_release(newpage);
 		return err;
 	}
 
 	unlock_page(oldpage);
-	put_page(oldpage);
+	page_cache_release(oldpage);
 	cs->len = 0;
 
 	return 0;
@@ -986,7 +993,7 @@ static int fuse_ref_page(struct fuse_copy_state *cs, struct page *page,
 	fuse_copy_finish(cs);
 
 	buf = cs->pipebufs;
-	get_page(page);
+	page_cache_get(page);
 	buf->page = page;
 	buf->offset = offset;
 	buf->len = count;
@@ -1481,7 +1488,7 @@ out_unlock:
 
 out:
 	for (; page_nr < cs.nr_segs; page_nr++)
-		put_page(bufs[page_nr].page);
+		page_cache_release(bufs[page_nr].page);
 
 	kfree(bufs);
 	return ret;
@@ -1678,8 +1685,8 @@ static int fuse_notify_store(struct fuse_conn *fc, unsigned int size,
 		goto out_up_killsb;
 
 	mapping = inode->i_mapping;
-	index = outarg.offset >> PAGE_SHIFT;
-	offset = outarg.offset & ~PAGE_MASK;
+	index = outarg.offset >> PAGE_CACHE_SHIFT;
+	offset = outarg.offset & ~PAGE_CACHE_MASK;
 	file_size = i_size_read(inode);
 	end = outarg.offset + outarg.size;
 	if (end > file_size) {
@@ -1698,13 +1705,13 @@ static int fuse_notify_store(struct fuse_conn *fc, unsigned int size,
 		if (!page)
 			goto out_iput;
 
-		this_num = min_t(unsigned, num, PAGE_SIZE - offset);
+		this_num = min_t(unsigned, num, PAGE_CACHE_SIZE - offset);
 		err = fuse_copy_page(cs, &page, offset, this_num, 0);
 		if (!err && offset == 0 &&
-		    (this_num == PAGE_SIZE || file_size == end))
+		    (this_num == PAGE_CACHE_SIZE || file_size == end))
 			SetPageUptodate(page);
 		unlock_page(page);
-		put_page(page);
+		page_cache_release(page);
 
 		if (err)
 			goto out_iput;
@@ -1743,7 +1750,7 @@ static int fuse_retrieve(struct fuse_conn *fc, struct inode *inode,
 	size_t total_len = 0;
 	int num_pages;
 
-	offset = outarg->offset & ~PAGE_MASK;
+	offset = outarg->offset & ~PAGE_CACHE_MASK;
 	file_size = i_size_read(inode);
 
 	num = min(outarg->size, fc->max_write);
@@ -1765,7 +1772,7 @@ static int fuse_retrieve(struct fuse_conn *fc, struct inode *inode,
 	req->in.argpages = 1;
 	req->end = fuse_retrieve_end;
 
-	index = outarg->offset >> PAGE_SHIFT;
+	index = outarg->offset >> PAGE_CACHE_SHIFT;
 
 	while (num && req->num_pages < num_pages) {
 		struct page *page;
@@ -1775,7 +1782,7 @@ static int fuse_retrieve(struct fuse_conn *fc, struct inode *inode,
 		if (!page)
 			break;
 
-		this_num = min_t(unsigned, num, PAGE_SIZE - offset);
+		this_num = min_t(unsigned, num, PAGE_CACHE_SIZE - offset);
 		req->pages[req->num_pages] = page;
 		req->page_descs[req->num_pages].offset = offset;
 		req->page_descs[req->num_pages].length = this_num;
@@ -2107,7 +2114,8 @@ static ssize_t fuse_dev_splice_write(struct pipe_inode_info *pipe,
 out_free:
 	for (idx = 0; idx < nbuf; idx++) {
 		struct pipe_buffer *buf = &bufs[idx];
-		buf->ops->release(pipe, buf);
+		if (buf->ops)
+			buf->ops->release(pipe, buf);
 	}
 	pipe_unlock(pipe);
 
