@@ -56,7 +56,9 @@ struct sync_timeline *sync_timeline_create(const struct sync_timeline_ops *ops,
 	INIT_LIST_HEAD(&obj->active_list_head);
 	spin_lock_init(&obj->child_list_lock);
 
+#ifdef CONFIG_DEBUG_TIMELINE
 	sync_timeline_debug_add(obj);
+#endif
 
 	return obj;
 }
@@ -67,7 +69,9 @@ static void sync_timeline_free(struct kref *kref)
 	struct sync_timeline *obj =
 		container_of(kref, struct sync_timeline, kref);
 
+#ifdef CONFIG_DEBUG_TIMELINE
 	sync_timeline_debug_remove(obj);
+#endif
 
 	if (obj->ops->release_obj)
 		obj->ops->release_obj(obj);
@@ -165,7 +169,9 @@ static struct sync_fence *sync_fence_alloc(int size, const char *name)
 		goto err;
 
 	kref_init(&fence->kref);
+#ifdef CONFIG_DEBUG_TIMELINE
 	strlcpy(fence->name, name, sizeof(fence->name));
+#endif
 
 	init_waitqueue_head(&fence->wq);
 
@@ -206,7 +212,9 @@ struct sync_fence *sync_fence_create(const char *name, struct sync_pt *pt)
 			       fence_check_cb_func))
 		atomic_dec(&fence->status);
 
+#ifdef CONFIG_DEBUG_TIMELINE
 	sync_fence_debug_add(fence);
+#endif
 
 	return fence;
 }
@@ -308,7 +316,9 @@ struct sync_fence *sync_fence_merge(const char *name,
 		atomic_sub(num_fences - i, &fence->status);
 	fence->num_fences = i;
 
+#ifdef CONFIG_DEBUG_TIMELINE
 	sync_fence_debug_add(fence);
+#endif
 	return fence;
 }
 EXPORT_SYMBOL(sync_fence_merge);
@@ -324,12 +334,6 @@ int sync_fence_wake_up_wq(wait_queue_t *curr, unsigned mode,
 	wait->callback(wait->work.private, wait);
 	return 1;
 }
-
-bool sync_fence_signaled(struct sync_fence *fence)
-{
-	return atomic_read(&fence->status) <= 0;
-}
-EXPORT_SYMBOL(sync_fence_signaled);
 
 int sync_fence_wait_async(struct sync_fence *fence,
 			  struct sync_fence_waiter *waiter)
@@ -552,7 +556,9 @@ static int sync_fence_release(struct inode *inode, struct file *file)
 {
 	struct sync_fence *fence = file->private_data;
 
+#ifdef CONFIG_DEBUG_TIMELINE
 	sync_fence_debug_remove(fence);
+#endif
 
 	kref_put(&fence->kref, sync_fence_free);
 	return 0;
@@ -668,7 +674,8 @@ static int sync_fill_pt_info(struct fence *fence, void *data, int size)
 static long sync_fence_ioctl_fence_info(struct sync_fence *fence,
 					unsigned long arg)
 {
-	struct sync_fence_info_data *data;
+	u8 data_buf[4096] __aligned(sizeof(long));
+	struct sync_fence_info_data *data = (typeof(data))data_buf;
 	__u32 size;
 	__u32 len = 0;
 	int ret, i;
@@ -682,11 +689,9 @@ static long sync_fence_ioctl_fence_info(struct sync_fence *fence,
 	if (size > 4096)
 		size = 4096;
 
-	data = kzalloc(size, GFP_KERNEL);
-	if (data == NULL)
-		return -ENOMEM;
-
+#ifdef CONFIG_DEBUG_TIMELINE
 	strlcpy(data->name, fence->name, sizeof(data->name));
+#endif
 	data->status = atomic_read(&fence->status);
 	if (data->status >= 0)
 		data->status = !data->status;
@@ -712,7 +717,6 @@ static long sync_fence_ioctl_fence_info(struct sync_fence *fence,
 		ret = 0;
 
 out:
-	kfree(data);
 
 	return ret;
 }

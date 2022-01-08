@@ -34,6 +34,7 @@
 #include <asm/cacheflush.h>
 #endif
 #include <linux/device.h>
+#include <linux/miscdevice.h>
 #include <linux/msm_dma_iommu_mapping.h>
 
 #include "ion.h"

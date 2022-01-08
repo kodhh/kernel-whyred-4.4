@@ -85,12 +85,7 @@ static int lmk_fast_run = 1;
 
 static unsigned long lowmem_deathpending_timeout;
 
-#define lowmem_print(level, x...)			\
-	do {						\
-		if (lowmem_debug_level >= (level))	\
-			pr_info(x);			\
-	} while (0)
-
+#define lowmem_print(level, x...)
 
 static DECLARE_WAIT_QUEUE_HEAD(event_wait);
 static DEFINE_SPINLOCK(lmk_event_lock);
@@ -240,9 +235,9 @@ module_param_named(adj_max_shift, adj_max_shift, short,
                    S_IRUGO | S_IWUSR);
 
 /* User knob to enable/disable adaptive lmk feature */
-static int enable_adaptive_lmk;
-module_param_named(enable_adaptive_lmk, enable_adaptive_lmk, int,
-		   S_IRUGO | S_IWUSR);
+static int enable_adaptive_lmk = 0;
+// module_param_named(enable_adaptive_lmk, enable_adaptive_lmk, int,
+//		   S_IRUGO | S_IWUSR);
 
 /*
  * This parameter controls the behaviour of LMK when vmpressure is in
@@ -251,7 +246,7 @@ module_param_named(enable_adaptive_lmk, enable_adaptive_lmk, int,
  * 90-94. Usually this is a pseudo minfree value, higher than the
  * highest configured value in minfree array.
  */
-static int vmpressure_file_min = 89600;
+static int vmpressure_file_min;
 module_param_named(vmpressure_file_min, vmpressure_file_min, int,
 		   S_IRUGO | S_IWUSR);
 
@@ -665,14 +660,10 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 		}
 
 		task_lock(selected);
+		get_task_struct(selected);
 		send_sig(SIGKILL, selected, 0);
-		/*
-		 * FIXME: lowmemorykiller shouldn't abuse global OOM killer
-		 * infrastructure. There is no real reason why the selected
-		 * task should have access to the memory reserves.
-		 */
 		if (selected->mm)
-			mark_oom_victim(selected);
+			task_set_lmk_waiting(selected);
 		task_unlock(selected);
 		cache_size = other_file * (long)(PAGE_SIZE / 1024);
 		cache_limit = minfree * (long)(PAGE_SIZE / 1024);
@@ -713,14 +704,13 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 		lowmem_deathpending_timeout = jiffies + HZ;
 		rem += selected_tasksize;
 		rcu_read_unlock();
-		get_task_struct(selected);
 		/* give the system time to free up the memory */
 		msleep_interruptible(20);
 //		trace_almk_shrink(selected_tasksize, ret,
 //				  other_free, other_file,
 //				  selected_oom_score_adj);
 	} else {
-//		trace_almk_shrink(1, ret, other_free, other_file, 0);
+		//trace_almk_shrink(1, ret, other_free, other_file, 0);
 		rcu_read_unlock();
 	}
 

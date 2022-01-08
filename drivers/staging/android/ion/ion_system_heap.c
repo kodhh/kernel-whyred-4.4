@@ -37,7 +37,11 @@ static gfp_t high_order_gfp_flags = (GFP_HIGHUSER | __GFP_NOWARN |
 static gfp_t low_order_gfp_flags  = (GFP_HIGHUSER | __GFP_NOWARN);
 
 #ifndef CONFIG_ALLOC_BUFFERS_IN_4K_CHUNKS
-static const unsigned int orders[] = {9, 8, 4, 0};
+#if defined(CONFIG_IOMMU_IO_PGTABLE_ARMV7S)
+static const unsigned int orders[] = {8, 4, 0};
+#else
+static const unsigned int orders[] = {9, 4, 0};
+#endif
 #else
 static const unsigned int orders[] = {0};
 #endif
@@ -449,10 +453,9 @@ static int ion_system_heap_allocate(struct ion_heap *heap,
 		if (info && tmp_info) {
 			if (info->order >= tmp_info->order) {
 				i = process_info(info, sg, sg_sync, &data, i);
-				if (sg_sync)
-					sg_sync = sg_next(sg_sync);
 				free_info(info, info_onstack,
 					  ARRAY_SIZE(info_onstack));
+				sg_sync = sg_next(sg_sync);
 			} else {
 				i = process_info(tmp_info, sg, 0, 0, i);
 				free_info(tmp_info, info_onstack,
@@ -460,9 +463,8 @@ static int ion_system_heap_allocate(struct ion_heap *heap,
 			}
 		} else if (info) {
 			i = process_info(info, sg, sg_sync, &data, i);
-			if (sg_sync)
-				sg_sync = sg_next(sg_sync);
 			free_info(info, info_onstack, ARRAY_SIZE(info_onstack));
+			sg_sync = sg_next(sg_sync);
 		} else if (tmp_info) {
 			i = process_info(tmp_info, sg, 0, 0, i);
 			free_info(tmp_info, info_onstack,
